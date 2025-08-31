@@ -45,7 +45,13 @@ export default function ProtectedPage() {
   }, []);
 
   const handleGetLatestMessage = useCallback((newMessage) => {
-    setAllMessages(prev => [...prev, newMessage]);
+    const transformedMessage = {
+      time: new Date(newMessage.timestamp),
+      msg: newMessage.text,
+      name: newMessage.senderId || 'Unknown User' 
+    };
+    
+    setAllMessages(prev => [...prev, transformedMessage]);
   }, []);
 
   const handleSocketError = useCallback((err) => {
@@ -165,15 +171,10 @@ export default function ProtectedPage() {
     e.preventDefault();
     if (!message.trim() || !currentRoom.id || !socket) return;
 
-    const newMessage = {
-      time: new Date(),
-      msg: message,
-      name: userName
-    };
-
+    // Send the message in the format the backend expects
     socket.emit('newMessage', {
-      newMessage,
-      room: currentRoom.id
+      room: currentRoom.id,
+      text: message // Send as 'text' instead of 'newMessage'
     });
 
     setMessage('');

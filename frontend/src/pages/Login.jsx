@@ -14,25 +14,29 @@ export default function Login() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
+        e.preventDefault();
+        setIsLoading(true);
+        setError(null);
 
-    try {
-      const res = await axios.post(
-        "https://chat-app-server-j6h2.onrender.com/api/auth/login",
-        formData
-      );
-      localStorage.setItem("token", res.data.token);
-      localStorage.setItem("user", JSON.stringify(res.data.user));
-      navigate("/protected");
-    } catch (err) {
-      setError(err.response?.data?.message || "Login failed. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+        try {
+            const res = await axios.post(
+            "https://chat-app-server-j6h2.onrender.com/api/auth/login",
+            formData
+            );
+            localStorage.setItem("token", res.data.token);
+            localStorage.setItem("user", JSON.stringify(res.data.user));
+            
+            // Add a small delay to ensure localStorage is persisted
+            setTimeout(() => {
+            navigate("/protected");
+            }, 50);
+            
+        } catch (err) {
+            setError(err.response?.data?.message || "Login failed. Please try again.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 flex items-center justify-center p-4 relative overflow-hidden">
       
