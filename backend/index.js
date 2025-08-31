@@ -35,7 +35,7 @@ const io = new Server(server, {
   },
 });
 
-// middleware for auth
+// --- middleware for auth ---
 io.use((socket, next) => {
   try {
     let token =
@@ -52,7 +52,7 @@ io.use((socket, next) => {
     jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
       if (err) return next(new Error('Unauthorized'));
       socket.userId = decoded.id;
-      socket.userName = decoded.name || 'Anonymous'; // <-- attach userName
+      socket.userName = decoded.name || 'Anonymous';
       return next();
     });
   } catch (e) {
@@ -160,7 +160,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ✅ FIXED: newMessage event now emits msg, name, time
+  // --- FIXED newMessage ---
   socket.on('newMessage', (payload = {}, ack) => {
     try {
       const roomId = payload.room || payload.roomId;
@@ -182,9 +182,11 @@ io.on('connection', (socket) => {
       const message = {
         id: uuidv4(),
         roomId,
-        msg: text,                        // <-- changed
-        name: socket.userName || "Anonymous", // <-- changed
-        time: Date.now(),                 // <-- changed
+        msg: text, // <-- use "msg" instead of text
+        senderId: socket.userId || null,
+        senderName: socket.userName || "Anonymous",
+        socketId: socket.id,
+        time: new Date().toISOString(),
       };
 
       io.to(roomId).emit('getLatestMessage', message);

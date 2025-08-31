@@ -1,3 +1,4 @@
+// ProtectedPage.jsx
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -14,6 +15,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export default function ProtectedPage() {
   const navigate = useNavigate();
+
+  // UI state
   const [activeTab, setActiveTab] = useState('join');
   const [roomIdInput, setRoomIdInput] = useState('');
   const [currentRoom, setCurrentRoom] = useState({ id: '', name: '' });
@@ -23,62 +26,135 @@ export default function ProtectedPage() {
   const [error, setError] = useState('');
   const [socket, setSocket] = useState(null);
 
-  const user = JSON.parse(localStorage.getItem('user'));
-  const userName = user?.name || 'User';
   const messagesEndRef = useRef(null);
 
+  // user info from localStorage (unchanged)
+  const user = JSON.parse(localStorage.getItem('user'));
+  const userName = user?.name || 'User';
+
+  // SERVER URL (use your server url)
+  const SOCKET_URL = 'https://chat-app-server-j6h2.onrender.com';
+
+  // connect socket once
   useEffect(() => {
     const token = localStorage.getItem('token');
-    const newSocket = io('https://chat-app-server-j6h2.onrender.com', {
+    const newSocket = io(SOCKET_URL, {
       auth: { token },
-      withCredentials: true
+      withCredentials: true,
+      transports: ['websocket']
     });
 
     setSocket(newSocket);
 
-    newSocket.on('roomCreated', ({ roomId, roomName }) => {
-      setCurrentRoom({ id: roomId, name: roomName });
+    // connected ack
+    newSocket.on('connected', (payload) => {
+      // optional: console.log('socket connected', payload);
+    });
+
+    // room created by this socket
+    // server emits: socket.emit('roomCreated', { roomId, roomName })
+    newSocket.on('roomCreated', ({ roomId, roomName } = {}) => {
+      setCurrentRoom({ id: roomId || '', name: roomName || 'Chat Room' });
       setIsInRoom(true);
       setAllMessages([]);
     });
 
-    newSocket.on('roomJoined', (roomId) => {
-      setCurrentRoom(prev => ({ ...prev, id: roomId }));
+    // server may emit roomJoined either as plain id or object { id, name, messages }
+    newSocket.on('roomJoined', (payload) => {
+      // handle both shapes
+      if (!payload) return;
+      if (typeof payload === 'string') {
+        setCurrentRoom(prev => ({ ...prev, id: payload }));
+      } else if (typeof payload === 'object') {
+        const id = payload.id || payload.roomId || '';
+        const name = payload.name || payload.roomName || '';
+        const messages = payload.messages || [];
+        setCurrentRoom({ id, name });
+        // normalize messages if server sent them
+        const normalized = Array.isArray(messages) ? messages.map(normalizeIncomingMessage) : [];
+        setAllMessages(normalized);
+      }
       setIsInRoom(true);
-      setAllMessages([]);
     });
 
-    newSocket.on('getLatestMessage', (newMessage) => {
-      setAllMessages(prev => [...prev, newMessage]);
+    // messages from server
+    newSocket.on('getLatestMessage', (incoming) => {
+      const normalized = normalizeIncomingMessage(incoming);
+      setAllMessages(prev => [...prev, normalized]);
     });
 
+    // room closed by server
+    newSocket.on('roomClosed', ({ roomId } = {}) => {
+      if (currentRoom.id === roomId) {
+        setError('Room closed');
+        setTimeout(() => setError(''), 3000);
+        leaveRoomLocal(); // local cleanup
+      }
+    });
+
+    // user / room events (optional UI hooks)
+    newSocket.on('userJoined', (_) => {});
+    newSocket.on('userLeft', (_) => {});
+
+    // room user count
+    newSocket.on('roomUsers', (_) => {});
+
+    // error channels
+    newSocket.on('roomError', (msg) => {
+      setError(typeof msg === 'string' ? msg : msg?.message || 'Room error');
+      setTimeout(() => setError(''), 3000);
+    });
+    newSocket.on('serverError', (msg) => {
+      setError(typeof msg === 'string' ? msg : msg?.message || 'Server error');
+      setTimeout(() => setError(''), 3000);
+    });
     newSocket.on('error', (err) => {
-      setError(err.message || 'Socket error');
+      setError(err?.message || 'Socket error');
       setTimeout(() => setError(''), 3000);
     });
 
     return () => {
       newSocket.disconnect();
+      setSocket(null);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
 
+  // helper: normalize any message shape to { id, msg, name, time }
+  function normalizeIncomingMessage(msg = {}) {
+    // msg could be: { id, msg, name, time } OR { id, text, senderName, timestamp } etc.
+    const id = msg.id || msg._id || Date.now();
+    const text = (msg.msg ?? msg.text ?? msg.message ?? msg.newMessage ?? '').toString();
+    const name = msg.name ?? msg.senderName ?? msg.sender ?? 'Anonymous';
+    // time might be timestamp number or ISO string
+    const time = msg.time ?? msg.timestamp ?? msg.ts ?? (msg.createdAt ? new Date(msg.createdAt).toISOString() : new Date().toISOString());
+    return { id, msg: text, name, time };
+  }
+
+  // handle logout
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     socket?.disconnect();
+    setSocket(null);
     navigate('/login');
   };
 
+  // create room
   const handleCreateRoom = (e) => {
     e.preventDefault();
-    if (socket) {
-      socket.emit('createRoom', {
-        roomName: `${userName}'s Room`,
-        userName
-      });
-    }
+    if (!socket) return;
+    // server expects { roomName, userName } (your server used that shape earlier)
+    socket.emit('createRoom', {
+      roomName: `${userName}'s Room`,
+      userName
+    }, (ack) => {
+      // optional ack handling
+      // server returns { ok: true, roomId, roomName } if ok
+    });
   };
 
+  // join room (from form)
   const handleJoinRoom = (e) => {
     e.preventDefault();
     if (!roomIdInput.trim()) {
@@ -86,53 +162,83 @@ export default function ProtectedPage() {
       setTimeout(() => setError(''), 3000);
       return;
     }
-    if (socket) {
-      socket.emit('joinRoom', roomIdInput);
+    if (!socket) return;
+    // server joinRoom accepts either id string or object; pass string
+    socket.emit('joinRoom', roomIdInput.trim(), (ack) => {
+      // ack optional
+    });
+    setRoomIdInput('');
+  };
+
+  // copy room id
+  const copyToClipboard = async () => {
+    try {
+      if (!currentRoom.id) return;
+      await navigator.clipboard.writeText(currentRoom.id);
+      setError('Room ID copied to clipboard!');
+      setTimeout(() => setError(''), 2000);
+    } catch (err) {
+      setError('Could not copy');
+      setTimeout(() => setError(''), 2000);
     }
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(currentRoom.id);
-    setError('Room ID copied to clipboard!');
-    setTimeout(() => setError(''), 2000);
-  };
-
+  // send message: IMPORTANT — send only a string to server
   const handleSendMessage = (e) => {
-  e.preventDefault();
-  if (!message.trim() || !currentRoom.id || !socket) return;
+    e.preventDefault();
+    if (!message.trim() || !currentRoom.id || !socket) return;
 
-  // Optimistic message (for instant UI update)
-  const newMessage = {
-    id: Date.now(),
-    msg: message,
-    name: userName,
-    time: Date.now(),
+    // optimistic UI: add immediately with same shape UI expects
+    const optimistic = {
+      id: `optim-${Date.now()}`,
+      msg: message,
+      name: userName,
+      time: new Date().toISOString()
+    };
+    setAllMessages(prev => [...prev, optimistic]);
+
+    // send string only
+    socket.emit('newMessage', {
+      room: currentRoom.id,
+      newMessage: message
+    }, (ack) => {
+      // optional ack handling — server may return message object
+      if (ack && ack.ok && ack.message) {
+        // replace optimistic message with canonical server message if helpful
+        const normalized = normalizeIncomingMessage(ack.message);
+        setAllMessages(prev => {
+          // remove the optimistic copy (matching by optimistic id) and append the server message
+          const withoutOptim = prev.filter(m => m.id !== optimistic.id);
+          return [...withoutOptim, normalized];
+        });
+      }
+    });
+
+    setMessage('');
   };
 
-  // Add to state immediately
-  setAllMessages(prev => [...prev, newMessage]);
-
-  // Send only the text + roomId to server
-  socket.emit('newMessage', {
-    room: currentRoom.id,
-    newMessage: message   // <-- just a string now
-  });
-
-  setMessage('');
-};
-
-
-  const leaveRoom = () => {
+  // leave room both locally and notify server
+  const leaveRoomLocal = () => {
     setIsInRoom(false);
     setCurrentRoom({ id: '', name: '' });
     setRoomIdInput('');
     setAllMessages([]);
   };
+  const leaveRoom = () => {
+    if (socket && currentRoom.id) {
+      socket.emit('leaveRoom', currentRoom.id, (ack) => {
+        // ignore ack - do local cleanup anyway
+      });
+    }
+    leaveRoomLocal();
+  };
 
+  // auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages]);
 
+  // ------ RENDER ------
   if (isInRoom) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex flex-col">
@@ -179,32 +285,32 @@ export default function ProtectedPage() {
                 <p className="text-slate-500 mt-1">Send your first message to start the conversation</p>
               </div>
             ) : (
-              allMessages.map((message, index) => (
+              allMessages.map((m, index) => (
                 <motion.div
-                  key={index}
+                  key={m.id ?? index}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`flex ${userName === message.name ? 'justify-end' : 'justify-start'}`}
+                  className={`flex ${userName === (m.name ?? m.senderName) ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
                     className={`max-w-xs md:max-w-md px-4 py-2 rounded-xl ${
-                      userName === message.name
+                      userName === (m.name ?? m.senderName)
                         ? 'bg-teal-600 rounded-br-none'
                         : 'bg-slate-700 rounded-bl-none'
                     }`}
                   >
-                    {userName !== message.name && (
+                    {userName !== (m.name ?? m.senderName) && (
                       <p className="text-xs font-semibold text-teal-300">
-                        {message.name}
+                        {m.name ?? m.senderName}
                       </p>
                     )}
-                    <p className="text-white">{message.msg}</p>
+                    <p className="text-white">{String(m.msg ?? m.text ?? '')}</p>
                     <p
                       className={`text-xs mt-1 ${
-                        userName === message.name ? 'text-teal-200' : 'text-slate-400'
+                        userName === (m.name ?? m.senderName) ? 'text-teal-200' : 'text-slate-400'
                       } text-right`}
                     >
-                      {new Date(message.time).toLocaleTimeString([], {
+                      {new Date(m.time ?? Date.now()).toLocaleTimeString([], {
                         hour: '2-digit',
                         minute: '2-digit'
                       })}
