@@ -160,6 +160,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ✅ FIXED: newMessage event now emits msg, name, time
   socket.on('newMessage', (payload = {}, ack) => {
     try {
       const roomId = payload.room || payload.roomId;
@@ -181,11 +182,9 @@ io.on('connection', (socket) => {
       const message = {
         id: uuidv4(),
         roomId,
-        text,
-        senderId: socket.userId || null,
-        senderName: socket.userName || "Anonymous",  // <-- include senderName
-        socketId: socket.id,
-        timestamp: Date.now(),
+        msg: text,                        // <-- changed
+        name: socket.userName || "Anonymous", // <-- changed
+        time: Date.now(),                 // <-- changed
       };
 
       io.to(roomId).emit('getLatestMessage', message);
