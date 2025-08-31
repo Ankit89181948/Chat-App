@@ -62,7 +62,7 @@ io.use((socket, next) => {
 
 const activeRooms = new Map();
 const socketRooms = new Map();
-const roomMessages = new Map(); // Store messages for each room
+const roomMessages = new Map();
 
 function addMember(roomId, socketId) {
   if (!activeRooms.has(roomId)) return;
@@ -78,7 +78,7 @@ function removeMember(roomId, socketId) {
   room.members.delete(socketId);
   if (room.members.size === 0) {
     activeRooms.delete(roomId);
-    roomMessages.delete(roomId); // Clean up messages when room is empty
+    roomMessages.delete(roomId);
     io.to(roomId).emit('roomClosed', { roomId });
   }
   if (socketRooms.has(socketId)) {
@@ -107,7 +107,6 @@ function addMessageToRoom(roomId, message) {
   }
   const messages = roomMessages.get(roomId);
   messages.push(message);
-  // Keep only last 100 messages to prevent memory issues
   if (messages.length > 100) {
     roomMessages.set(roomId, messages.slice(-100));
   }
@@ -208,7 +207,7 @@ io.on('connection', (socket) => {
   socket.on('newMessage', (payload = {}, ack) => {
     try {
       const roomId = payload.room || payload.roomId;
-      const text = (payload.newMessage ?? payload.text ?? '').toString().trim();
+      const text = (payload.text ?? '').toString().trim();
 
       if (!roomId || typeof roomId !== 'string') {
         if (typeof ack === 'function') ack({ ok: false, error: 'INVALID_ROOM_ID' });
@@ -228,7 +227,7 @@ io.on('connection', (socket) => {
         roomId,
         text: text,
         senderId: socket.userId,
-        senderName: socket.userName || "Anonymous",
+        senderName: socket.userName,
         socketId: socket.id,
         time: new Date().toISOString(),
       };

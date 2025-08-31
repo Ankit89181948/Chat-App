@@ -26,6 +26,7 @@ export default function ProtectedPage() {
 
   const user = JSON.parse(localStorage.getItem('user'));
   const userName = user?.name || 'User';
+  const userId = user?.id || '';
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -52,7 +53,14 @@ export default function ProtectedPage() {
     });
 
     newSocket.on('getLatestMessage', (newMessage) => {
-      setAllMessages(prev => [...prev, newMessage]);
+      // Only add message if it doesn't already exist (prevent duplicates)
+      setAllMessages(prev => {
+        const messageExists = prev.some(msg => msg.id === newMessage.id);
+        if (!messageExists) {
+          return [...prev, newMessage];
+        }
+        return prev;
+      });
     });
 
     newSocket.on('roomUsers', ({ roomId, count }) => {
@@ -130,6 +138,7 @@ export default function ProtectedPage() {
     e.preventDefault();
     if (!message.trim() || !currentRoom.id || !socket) return;
 
+    // Don't add to local state here - wait for socket response to avoid duplicates
     socket.emit('newMessage', {
       text: message.trim(),
       room: currentRoom.id
@@ -211,24 +220,24 @@ export default function ProtectedPage() {
                   key={message.id || message.time}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`flex ${userName === message.senderName ? 'justify-end' : 'justify-start'}`}
+                  className={`flex ${userId === message.senderId ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
                     className={`max-w-xs md:max-w-md px-4 py-2 rounded-xl ${
-                      userName === message.senderName
+                      userId === message.senderId
                         ? 'bg-teal-600 rounded-br-none'
                         : 'bg-slate-700 rounded-bl-none'
                     }`}
                   >
-                    {userName !== message.senderName && (
-                      <p className="text-xs font-semibold text-teal-300">
+                    {userId !== message.senderId && (
+                      <p className="text-xs font-semibold text-teal-300 mb-1">
                         {message.senderName}
                       </p>
                     )}
-                    <p className="text-white">{message.text || message.msg}</p>
+                    <p className="text-white">{message.text}</p>
                     <p
                       className={`text-xs mt-1 ${
-                        userName === message.senderName ? 'text-teal-200' : 'text-slate-400'
+                        userId === message.senderId ? 'text-teal-200' : 'text-slate-400'
                       } text-right`}
                     >
                       {new Date(message.time).toLocaleTimeString([], {
