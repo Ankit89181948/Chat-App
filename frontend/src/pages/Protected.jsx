@@ -98,22 +98,29 @@ export default function ProtectedPage() {
   };
 
   const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (!message.trim() || !currentRoom.id || !socket) return;
+  e.preventDefault();
+  if (!message.trim() || !currentRoom.id || !socket) return;
 
-    const newMessage = {
-      time: new Date(),
-      msg: message,
-      name: userName
-    };
-
-    socket.emit('newMessage', {
-      newMessage,
-      room: currentRoom.id
-    });
-
-    setMessage('');
+  // Optimistic message (for instant UI update)
+  const newMessage = {
+    id: Date.now(),
+    msg: message,
+    name: userName,
+    time: Date.now(),
   };
+
+  // Add to state immediately
+  setAllMessages(prev => [...prev, newMessage]);
+
+  // Send only the text + roomId to server
+  socket.emit('newMessage', {
+    room: currentRoom.id,
+    newMessage: message   // <-- just a string now
+  });
+
+  setMessage('');
+};
+
 
   const leaveRoom = () => {
     setIsInRoom(false);
