@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Protected from './pages/Protected';
-import PrivateRoute from './components/PrivateRoute';
+import PrivateRoute from './pages/PrivateRoute';
 
 function App() {
   return (
