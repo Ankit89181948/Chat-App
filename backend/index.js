@@ -62,6 +62,7 @@ io.use((socket, next) => {
 
 const activeRooms = new Map();
 const socketRooms = new Map();
+const roomMessages = new Map(); // Store messages for each room
 
 function addMember(roomId, socketId) {
   if (!activeRooms.has(roomId)) return;
@@ -77,6 +78,7 @@ function removeMember(roomId, socketId) {
   room.members.delete(socketId);
   if (room.members.size === 0) {
     activeRooms.delete(roomId);
+    roomMessages.delete(roomId); // Clean up messages when room is empty
     io.to(roomId).emit('roomClosed', { roomId });
   }
   if (socketRooms.has(socketId)) {
@@ -95,15 +97,38 @@ function emitRoomUsers(roomId) {
   io.to(roomId).emit('roomUsers', { roomId, count });
 }
 
+function getRoomMessages(roomId) {
+  return roomMessages.get(roomId) || [];
+}
+
+function addMessageToRoom(roomId, message) {
+  if (!roomMessages.has(roomId)) {
+    roomMessages.set(roomId, []);
+  }
+  const messages = roomMessages.get(roomId);
+  messages.push(message);
+  // Keep only last 100 messages to prevent memory issues
+  if (messages.length > 100) {
+    roomMessages.set(roomId, messages.slice(-100));
+  }
+}
+
 io.on('connection', (socket) => {
+  console.log(`User connected: ${socket.userName} (${socket.id})`);
   socket.emit('connected', { socketId: socket.id, userId: socket.userId });
 
   socket.on('createRoom', (payload = {}, ack) => {
     try {
-      const roomName = (payload.roomName || 'Room').toString().trim();
+      const roomName = (payload.roomName || `${socket.userName}'s Room`).toString().trim();
       const roomId = uuidv4();
 
-      activeRooms.set(roomId, { roomName, members: new Set() });
+      activeRooms.set(roomId, { 
+        roomName, 
+        members: new Set(),
+        createdBy: socket.userId,
+        createdAt: new Date()
+      });
+      
       socket.join(roomId);
       addMember(roomId, socket.id);
 
@@ -113,6 +138,7 @@ io.on('connection', (socket) => {
 
       emitRoomUsers(roomId);
     } catch (err) {
+      console.error('Create room error:', err);
       if (typeof ack === 'function') ack({ ok: false, error: 'CREATE_ROOM_FAILED' });
       socket.emit('serverError', 'Could not create room');
     }
@@ -133,11 +159,25 @@ io.on('connection', (socket) => {
       socket.join(roomId);
       addMember(roomId, socket.id);
 
-      socket.emit('roomJoined', { id: roomId, name: activeRooms.get(roomId).roomName, messages: [] });
-      io.to(roomId).emit('userJoined', { roomId, socketId: socket.id });
+      const room = activeRooms.get(roomId);
+      const messages = getRoomMessages(roomId);
+      
+      socket.emit('roomJoined', { 
+        id: roomId, 
+        name: room.roomName, 
+        messages: messages 
+      });
+      
+      io.to(roomId).emit('userJoined', { 
+        roomId, 
+        socketId: socket.id,
+        userName: socket.userName 
+      });
+      
       emitRoomUsers(roomId);
       if (typeof ack === 'function') ack({ ok: true, roomId });
     } catch (err) {
+      console.error('Join room error:', err);
       if (typeof ack === 'function') ack({ ok: false, error: 'JOIN_ROOM_FAILED' });
       socket.emit('serverError', 'Could not join room');
     }
@@ -151,20 +191,24 @@ io.on('connection', (socket) => {
       }
       socket.leave(roomId);
       removeMember(roomId, socket.id);
-      io.to(roomId).emit('userLeft', { roomId, socketId: socket.id });
+      io.to(roomId).emit('userLeft', { 
+        roomId, 
+        socketId: socket.id,
+        userName: socket.userName 
+      });
       emitRoomUsers(roomId);
       if (typeof ack === 'function') ack({ ok: true, roomId });
     } catch (err) {
+      console.error('Leave room error:', err);
       if (typeof ack === 'function') ack({ ok: false, error: 'LEAVE_ROOM_FAILED' });
       socket.emit('serverError', 'Could not leave room');
     }
   });
 
-  // --- FIXED newMessage ---
   socket.on('newMessage', (payload = {}, ack) => {
     try {
       const roomId = payload.room || payload.roomId;
-      const text = (payload.newMessage ?? payload.text ?? '').toString();
+      const text = (payload.newMessage ?? payload.text ?? '').toString().trim();
 
       if (!roomId || typeof roomId !== 'string') {
         if (typeof ack === 'function') ack({ ok: false, error: 'INVALID_ROOM_ID' });
@@ -174,7 +218,7 @@ io.on('connection', (socket) => {
         if (typeof ack === 'function') ack({ ok: false, error: 'NOT_IN_ROOM' });
         return socket.emit('roomError', 'You are not in this room');
       }
-      if (!text.trim()) {
+      if (!text) {
         if (typeof ack === 'function') ack({ ok: false, error: 'EMPTY_MESSAGE' });
         return;
       }
@@ -182,27 +226,35 @@ io.on('connection', (socket) => {
       const message = {
         id: uuidv4(),
         roomId,
-        msg: text, // <-- use "msg" instead of text
-        senderId: socket.userId || null,
+        text: text,
+        senderId: socket.userId,
         senderName: socket.userName || "Anonymous",
         socketId: socket.id,
         time: new Date().toISOString(),
       };
 
+      addMessageToRoom(roomId, message);
       io.to(roomId).emit('getLatestMessage', message);
+      
       if (typeof ack === 'function') ack({ ok: true, message });
     } catch (err) {
+      console.error('Send message error:', err);
       if (typeof ack === 'function') ack({ ok: false, error: 'SEND_MESSAGE_FAILED' });
       socket.emit('serverError', 'Could not send message');
     }
   });
 
   socket.on('disconnect', () => {
+    console.log(`User disconnected: ${socket.userName} (${socket.id})`);
     const joined = socketRooms.get(socket.id);
     if (joined && joined.size) {
       for (const roomId of Array.from(joined)) {
         removeMember(roomId, socket.id);
-        io.to(roomId).emit('userLeft', { roomId, socketId: socket.id });
+        io.to(roomId).emit('userLeft', { 
+          roomId, 
+          socketId: socket.id,
+          userName: socket.userName 
+        });
         emitRoomUsers(roomId);
       }
     }
