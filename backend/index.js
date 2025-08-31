@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 
 const express = require('express');
@@ -7,8 +6,7 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid'); 
-
+const { v4: uuidv4 } = require('uuid');
 
 const authRoutes = require('./routes/authRoutes');
 
@@ -37,7 +35,7 @@ const io = new Server(server, {
   },
 });
 
-
+// middleware for auth
 io.use((socket, next) => {
   try {
     let token =
@@ -53,14 +51,14 @@ io.use((socket, next) => {
 
     jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
       if (err) return next(new Error('Unauthorized'));
-      socket.userId = decoded.id; 
+      socket.userId = decoded.id;
+      socket.userName = decoded.name || 'Anonymous'; // <-- attach userName
       return next();
     });
   } catch (e) {
     return next(new Error('Unauthorized'));
   }
 });
-
 
 const activeRooms = new Map();
 const socketRooms = new Map();
@@ -122,7 +120,7 @@ io.on('connection', (socket) => {
 
   socket.on('joinRoom', (roomId, ack) => {
     try {
-      if (typeof roomId === 'object') roomId = roomId?.roomId; 
+      if (typeof roomId === 'object') roomId = roomId?.roomId;
       if (!roomId || typeof roomId !== 'string') {
         if (typeof ack === 'function') ack({ ok: false, error: 'INVALID_ROOM_ID' });
         return socket.emit('roomError', 'Invalid room id');
@@ -135,7 +133,7 @@ io.on('connection', (socket) => {
       socket.join(roomId);
       addMember(roomId, socket.id);
 
-      socket.emit('roomJoined', roomId);
+      socket.emit('roomJoined', { id: roomId, name: activeRooms.get(roomId).roomName, messages: [] });
       io.to(roomId).emit('userJoined', { roomId, socketId: socket.id });
       emitRoomUsers(roomId);
       if (typeof ack === 'function') ack({ ok: true, roomId });
@@ -184,7 +182,8 @@ io.on('connection', (socket) => {
         id: uuidv4(),
         roomId,
         text,
-        senderId: socket.userId || null, 
+        senderId: socket.userId || null,
+        senderName: socket.userName || "Anonymous",  // <-- include senderName
         socketId: socket.id,
         timestamp: Date.now(),
       };
