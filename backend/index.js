@@ -184,7 +184,7 @@ io.on('connection', (socket) => {
 
   socket.on('leaveRoom', (roomId, ack) => {
     try {
-      if (!roomId || !socket.rooms.has(roomId)) {
+      if (!roomId || !socketRooms.has(socket.id) || !socketRooms.get(socket.id).has(roomId)) {
         if (typeof ack === 'function') ack({ ok: false, error: 'NOT_IN_ROOM' });
         return;
       }
@@ -213,10 +213,13 @@ io.on('connection', (socket) => {
         if (typeof ack === 'function') ack({ ok: false, error: 'INVALID_ROOM_ID' });
         return socket.emit('roomError', 'Invalid room id');
       }
-      if (!socket.rooms.has(roomId)) {
+      
+      // FIXED: Use socketRooms instead of socket.rooms for membership check
+      if (!socketRooms.has(socket.id) || !socketRooms.get(socket.id).has(roomId)) {
         if (typeof ack === 'function') ack({ ok: false, error: 'NOT_IN_ROOM' });
         return socket.emit('roomError', 'You are not in this room');
       }
+      
       if (!text) {
         if (typeof ack === 'function') ack({ ok: false, error: 'EMPTY_MESSAGE' });
         return;

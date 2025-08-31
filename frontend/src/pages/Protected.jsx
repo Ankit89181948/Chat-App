@@ -23,6 +23,7 @@ export default function ProtectedPage() {
   const [error, setError] = useState('');
   const [socket, setSocket] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(0);
+  const [canSendMessages, setCanSendMessages] = useState(false); // NEW: Added delay protection
 
   const user = JSON.parse(localStorage.getItem('user'));
   const userName = user?.name || 'User';
@@ -44,6 +45,8 @@ export default function ProtectedPage() {
       setIsInRoom(true);
       setAllMessages([]);
       setError('');
+      setCanSendMessages(false); // NEW: Reset message sending ability
+      setTimeout(() => setCanSendMessages(true), 100); // NEW: Small delay
     });
 
     newSocket.on('roomJoined', (roomData) => {
@@ -51,6 +54,8 @@ export default function ProtectedPage() {
       setIsInRoom(true);
       setAllMessages(roomData.messages || []);
       setError('');
+      setCanSendMessages(false); // NEW: Reset message sending ability
+      setTimeout(() => setCanSendMessages(true), 100); // NEW: Small delay
     });
 
     newSocket.on('getLatestMessage', (newMessage) => {
@@ -134,7 +139,8 @@ export default function ProtectedPage() {
 
   const handleSendMessage = (e) => {
     e.preventDefault();
-    if (!message.trim() || !currentRoom.id || !socket) return;
+    // NEW: Added canSendMessages check to prevent timing issues
+    if (!message.trim() || !currentRoom.id || !socket || !canSendMessages) return;
 
     socket.emit('newMessage', {
       text: message.trim(),
@@ -153,6 +159,7 @@ export default function ProtectedPage() {
     setRoomIdInput('');
     setAllMessages([]);
     setOnlineUsers(0);
+    setCanSendMessages(false); // NEW: Reset message sending ability
   };
 
   useEffect(() => {
@@ -259,14 +266,14 @@ export default function ProtectedPage() {
               onChange={(e) => setMessage(e.target.value)}
               placeholder="Type a message..."
               className="flex-1 py-3 px-4 bg-slate-700/50 border border-slate-700/50 rounded-full focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500/50 text-white placeholder-slate-400"
-              disabled={!currentRoom.id}
+              disabled={!currentRoom.id || !canSendMessages} // NEW: Added canSendMessages check
             />
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               type="submit"
               className="p-3 bg-teal-600 hover:bg-teal-700 rounded-full text-white disabled:opacity-50 disabled:bg-slate-700"
-              disabled={!currentRoom.id || !message.trim()}
+              disabled={!currentRoom.id || !message.trim() || !canSendMessages} // NEW: Added canSendMessages check
             >
               <FiSend size={18} />
             </motion.button>
@@ -301,7 +308,7 @@ export default function ProtectedPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-rose-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center z-50"
-          >
+            >
             <p className="text-sm">{error}</p>
           </motion.div>
         )}
