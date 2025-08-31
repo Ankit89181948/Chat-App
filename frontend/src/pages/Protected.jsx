@@ -29,6 +29,7 @@ export default function ProtectedPage() {
   const userId = user?.id || '';
   const messagesEndRef = useRef(null);
 
+  // ✅ FIXED: only run this once (no dependency on currentRoom.id)
   useEffect(() => {
     const token = localStorage.getItem('token');
     const newSocket = io('https://chat-app-server-j6h2.onrender.com', {
@@ -53,7 +54,6 @@ export default function ProtectedPage() {
     });
 
     newSocket.on('getLatestMessage', (newMessage) => {
-      // Only add message if it doesn't already exist (prevent duplicates)
       setAllMessages(prev => {
         const messageExists = prev.some(msg => msg.id === newMessage.id);
         if (!messageExists) {
@@ -64,9 +64,7 @@ export default function ProtectedPage() {
     });
 
     newSocket.on('roomUsers', ({ roomId, count }) => {
-      if (roomId === currentRoom.id) {
-        setOnlineUsers(count);
-      }
+      setOnlineUsers(prev => (roomId === currentRoom.id ? count : prev));
     });
 
     newSocket.on('userJoined', ({ userName: joinedUser }) => {
@@ -97,7 +95,7 @@ export default function ProtectedPage() {
     return () => {
       newSocket.disconnect();
     };
-  }, [currentRoom.id]);
+  }, []); // 🔥 only once
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -138,7 +136,6 @@ export default function ProtectedPage() {
     e.preventDefault();
     if (!message.trim() || !currentRoom.id || !socket) return;
 
-    // Don't add to local state here - wait for socket response to avoid duplicates
     socket.emit('newMessage', {
       text: message.trim(),
       room: currentRoom.id
