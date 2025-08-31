@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
@@ -23,10 +23,42 @@ export default function ProtectedPage() {
   const [error, setError] = useState('');
   const [notification, setNotification] = useState('');
   const [socket, setSocket] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const user = JSON.parse(localStorage.getItem('user'));
-  const userName = user?.name || 'User';
+  const userName = user?.name || 'Anonymous';
   const messagesEndRef = useRef(null);
+
+  // Socket event handlers
+  const handleRoomCreated = useCallback(({ roomId, roomName, messages = [] }) => {
+    setCurrentRoom({ id: roomId, name: roomName });
+    setIsInRoom(true);
+    setAllMessages(messages);
+    setIsLoading(false);
+  }, []);
+
+  const handleRoomJoined = useCallback((roomData) => {
+    setCurrentRoom({ id: roomData.id, name: roomData.name });
+    setIsInRoom(true);
+    setAllMessages(roomData.messages || []);
+    setIsLoading(false);
+  }, []);
+
+  const handleGetLatestMessage = useCallback((newMessage) => {
+    setAllMessages(prev => [...prev, newMessage]);
+  }, []);
+
+  const handleSocketError = useCallback((err) => {
+    setError(err?.message || 'Socket error');
+    setIsLoading(false);
+    setTimeout(() => setError(''), 3000);
+  }, []);
+
+  const handleConnectError = useCallback((err) => {
+    setError(err?.message || 'Connection error');
+    setIsLoading(false);
+    setTimeout(() => setError(''), 3000);
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -40,53 +72,54 @@ export default function ProtectedPage() {
       withCredentials: true
     });
 
+    // Set up event listeners
+    newSocket.on('roomCreated', handleRoomCreated);
+    newSocket.on('roomJoined', handleRoomJoined);
+    newSocket.on('getLatestMessage', handleGetLatestMessage);
+    newSocket.on('error', handleSocketError);
+    newSocket.on('connect_error', handleConnectError);
+
     setSocket(newSocket);
 
-    newSocket.on('roomCreated', ({ roomId, roomName }) => {
-      setCurrentRoom({ id: roomId, name: roomName });
-      setIsInRoom(true);
-      setAllMessages([]);
-    });
-
-    newSocket.on('roomJoined', (roomId) => {
-      setCurrentRoom(prev => ({ ...prev, id: roomId }));
-      setIsInRoom(true);
-      setAllMessages([]);
-    });
-
-    newSocket.on('getLatestMessage', (newMessage) => {
-      setAllMessages(prev => [...prev, newMessage]);
-    });
-
-    newSocket.on('error', (err) => {
-      setError(err?.message || 'Socket error');
-      setTimeout(() => setError(''), 3000);
-    });
-
-    newSocket.on('connect_error', (err) => {
-      setError(err?.message || 'Connection error');
-      setTimeout(() => setError(''), 3000);
-    });
-
     return () => {
-      // if leaving while in a room, politely leave first
-      if (newSocket && currentRoom.id) {
+      // Remove all event listeners
+      newSocket.off('roomCreated', handleRoomCreated);
+      newSocket.off('roomJoined', handleRoomJoined);
+      newSocket.off('getLatestMessage', handleGetLatestMessage);
+      newSocket.off('error', handleSocketError);
+      newSocket.off('connect_error', handleConnectError);
+      
+      // Leave room and disconnect
+      if (currentRoom.id) {
         newSocket.emit('leaveRoom', currentRoom.id);
       }
       newSocket.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate]);
+  }, [
+    navigate, 
+    handleRoomCreated, 
+    handleRoomJoined, 
+    handleGetLatestMessage, 
+    handleSocketError, 
+    handleConnectError, 
+    currentRoom.id
+  ]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    if (socket && currentRoom.id) {
+      socket.emit('leaveRoom', currentRoom.id);
+    }
     socket?.disconnect();
     navigate('/login');
   };
 
   const handleCreateRoom = (e) => {
     e.preventDefault();
+    setError('');
+    setIsLoading(true);
+    
     if (socket) {
       socket.emit('createRoom', {
         roomName: `${userName}'s Room`,
@@ -97,13 +130,27 @@ export default function ProtectedPage() {
 
   const handleJoinRoom = (e) => {
     e.preventDefault();
-    if (!roomIdInput.trim()) {
+    setError('');
+    setIsLoading(true);
+    
+    const trimmedId = roomIdInput.trim();
+    
+    if (!trimmedId) {
       setError('Please enter room ID');
+      setIsLoading(false);
       setTimeout(() => setError(''), 3000);
       return;
     }
+    
+    if (trimmedId.length < 6) {
+      setError('Room ID seems too short');
+      setIsLoading(false);
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+    
     if (socket) {
-      socket.emit('joinRoom', roomIdInput.trim());
+      socket.emit('joinRoom', trimmedId);
     }
   };
 
@@ -140,6 +187,7 @@ export default function ProtectedPage() {
     setCurrentRoom({ id: '', name: '' });
     setRoomIdInput('');
     setAllMessages([]);
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -194,7 +242,7 @@ export default function ProtectedPage() {
             ) : (
               allMessages.map((message, index) => (
                 <motion.div
-                  key={index}
+                  key={`${message.time}-${message.name}-${index}`}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className={`flex ${userName === message.name ? 'justify-end' : 'justify-start'}`}
@@ -280,6 +328,13 @@ export default function ProtectedPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Loading Overlay */}
+        {isLoading && (
+          <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500"></div>
+          </div>
+        )}
       </div>
     );
   }
@@ -368,9 +423,10 @@ export default function ProtectedPage() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 type="submit"
-                className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all"
+                disabled={isLoading}
+                className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all disabled:cursor-not-allowed"
               >
-                Join Room
+                {isLoading ? 'Joining...' : 'Join Room'}
               </motion.button>
             </form>
           ) : (
@@ -389,9 +445,10 @@ export default function ProtectedPage() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 type="submit"
-                className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all"
+                disabled={isLoading}
+                className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all disabled:cursor-not-allowed"
               >
-                Create Room
+                {isLoading ? 'Creating...' : 'Create Room'}
               </motion.button>
             </form>
           )}
@@ -409,6 +466,13 @@ export default function ProtectedPage() {
           </motion.button>
         </div>
       </motion.div>
+
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500"></div>
+        </div>
+      )}
     </div>
   );
 }

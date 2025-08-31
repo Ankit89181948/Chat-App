@@ -2,8 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Protected from './pages/Protected';
-
-const isAuthenticated = () => !!localStorage.getItem('token');
+import PrivateRoute from './components/PrivateRoute';
 
 function App() {
   return (
@@ -13,9 +12,14 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route
           path="/protected"
-          element={isAuthenticated() ? <Protected /> : <Navigate to="/login" />}
+          element={
+            <PrivateRoute>
+              <Protected />
+            </PrivateRoute>
+          }
         />
-        <Route path="*" element={<Navigate to="/login" />} />
+        <Route path="/" element={<Navigate to="/protected" replace />} />
+        <Route path="*" element={<Navigate to="/protected" replace />} />
       </Routes>
     </BrowserRouter>
   );
