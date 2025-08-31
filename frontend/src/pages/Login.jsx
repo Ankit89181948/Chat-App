@@ -20,7 +20,7 @@ export default function Login() {
 
     try {
       const res = await axios.post(
-        "http://localhost:3000/api/auth/login",
+        "https://chat-app-server-j6h2.onrender.com/api/auth/login",
         formData
       );
       localStorage.setItem("token", res.data.token);

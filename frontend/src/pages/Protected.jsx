@@ -35,7 +35,7 @@ export default function ProtectedPage() {
       return;
     }
 
-    const newSocket = io('http://localhost:3000', {
+    const newSocket = io('https://chat-app-server-j6h2.onrender.com', {
       auth: { token },
       withCredentials: true
     });

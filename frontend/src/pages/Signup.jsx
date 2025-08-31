@@ -25,7 +25,7 @@ export default function Signup() {
 
     try {
       const res = await axios.post(
-        "http://localhost:3000/api/auth/signup",
+        "https://chat-app-server-j6h2.onrender.com/api/auth/signup",
         formData
       );
       localStorage.setItem("token", res.data.token);
