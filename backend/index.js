@@ -15,7 +15,7 @@ const authRoutes = require('./routes/authRoutes');
 const app = express();
 const server = http.createServer(app);
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://chat-app-client-w6uv.onrender.com';
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(cors({
