@@ -1,254 +1,380 @@
-"use client";
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
-import io from "socket.io-client";
-import { jwtDecode } from "jwt-decode";
-import { motion } from "framer-motion";
-import { toast } from "sonner";
-import { FaUsers, FaSignOutAlt, FaPaperPlane, FaComments } from "react-icons/fa";
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
+import {
+  FiCopy,
+  FiUsers,
+  FiLogOut,
+  FiMessageSquare,
+  FiSend,
+  FiPlus,
+  FiHash
+} from 'react-icons/fi';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export default function ProtectedPage() {
-  const [userName, setUserName] = useState("");
-  const [socket, setSocket] = useState(null);
-  const [room, setRoom] = useState(null);
-  const [roomUsers, setRoomUsers] = useState(1);
-  const [message, setMessage] = useState("");
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('join');
+  const [roomIdInput, setRoomIdInput] = useState('');
+  const [currentRoom, setCurrentRoom] = useState({ id: '', name: '' });
+  const [isInRoom, setIsInRoom] = useState(false);
+  const [message, setMessage] = useState('');
   const [allMessages, setAllMessages] = useState([]);
+  const [error, setError] = useState('');
+  const [socket, setSocket] = useState(null);
+
+  const user = JSON.parse(localStorage.getItem('user'));
+  const userName = user?.name || 'User';
   const messagesEndRef = useRef(null);
-  const router = useRouter();
 
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3000";
-
-  // scroll to bottom when new messages
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-  useEffect(scrollToBottom, [allMessages]);
-
-  // initialize socket
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    try {
-      const decoded = jwtDecode(token);
-      setUserName(decoded.name || "User");
-    } catch (err) {
-      console.error("Invalid token", err);
-      router.push("/login");
-      return;
-    }
-
-    const newSocket = io(BACKEND_URL, {
+    const token = localStorage.getItem('token');
+    const newSocket = io('https://chat-app-server-j6h2.onrender.com', {
       auth: { token },
-      withCredentials: true,
+      withCredentials: true
     });
+
     setSocket(newSocket);
 
-    newSocket.on("connect", () => console.log("Socket connected:", newSocket.id));
-    newSocket.on("connect_error", (err) => {
-      console.error("Socket connect error:", err.message);
-      toast.error("Connection failed: " + err.message);
+    newSocket.on('roomCreated', ({ roomId, roomName }) => {
+      setCurrentRoom({ id: roomId, name: roomName });
+      setIsInRoom(true);
+      setAllMessages([]);
+    });
+
+    newSocket.on('roomJoined', (roomId) => {
+      setCurrentRoom(prev => ({ ...prev, id: roomId }));
+      setIsInRoom(true);
+      setAllMessages([]);
+    });
+
+    newSocket.on('getLatestMessage', (newMessage) => {
+      setAllMessages(prev => [...prev, newMessage]);
+    });
+
+    newSocket.on('error', (err) => {
+      setError(err.message || 'Socket error');
+      setTimeout(() => setError(''), 3000);
     });
 
     return () => {
       newSocket.disconnect();
     };
-  }, [router, BACKEND_URL]);
-
-  // room creation
-  const handleCreateRoom = () => {
-    if (!socket) return;
-    socket.emit("createRoom", { roomName: "My Room" }, (res) => {
-      if (res.ok) {
-        setRoom(res);
-        toast.success("Room created successfully!");
-      } else {
-        toast.error("Room creation failed: " + res.error);
-      }
-    });
-  };
-
-  // room join
-  const handleJoinRoom = (roomId) => {
-    if (!socket) return;
-    socket.emit("joinRoom", roomId, (res) => {
-      if (res.ok) {
-        setRoom({ id: roomId });
-        toast.success("Joined room!");
-      } else {
-        toast.error("Join room failed: " + res.error);
-      }
-    });
-  };
-
-  // room leave
-  const handleLeaveRoom = () => {
-    if (!socket || !room) return;
-    socket.emit("leaveRoom", room.id, (res) => {
-      if (res.ok) {
-        setRoom(null);
-        setAllMessages([]);
-        toast.success("Left room");
-      } else {
-        toast.error("Leave room failed: " + res.error);
-      }
-    });
-  };
-
-  // new message receive
-  const handleGetLatestMessage = useCallback((newMessage) => {
-    const transformedMessage = {
-      id: newMessage.id,
-      time: new Date(newMessage.timestamp),
-      msg: newMessage.text,
-      senderName: newMessage.senderName || "Unknown User",
-      senderId: newMessage.senderId,
-      socketId: newMessage.socketId,
-    };
-    setAllMessages((prev) => [...prev, transformedMessage]);
   }, []);
 
-  // attach socket listeners
-  useEffect(() => {
-    if (!socket) return;
-    socket.on("roomUsers", (data) => setRoomUsers(data.count));
-    socket.on("getLatestMessage", handleGetLatestMessage);
-    socket.on("roomError", (msg) => toast.error(msg));
-    socket.on("serverError", (msg) => toast.error(msg));
-    socket.on("roomClosed", (data) => {
-      if (room && room.id === data.roomId) {
-        toast.error("Room was closed by the server");
-        setRoom(null);
-        setAllMessages([]);
-      }
-    });
-
-    return () => {
-      socket.off("roomUsers");
-      socket.off("getLatestMessage", handleGetLatestMessage);
-      socket.off("roomError");
-      socket.off("serverError");
-      socket.off("roomClosed");
-    };
-  }, [socket, room, handleGetLatestMessage]);
-
-  // send new message
-  const handleSendMessage = () => {
-    if (!socket || !room || !message.trim()) return;
-    socket.emit("newMessage", { room: room.id, newMessage: message }, (res) => {
-      if (!res.ok) {
-        toast.error("Message send failed: " + res.error);
-      }
-    });
-    setMessage("");
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    socket?.disconnect();
+    navigate('/login');
   };
 
-  return (
-    <div className="flex h-screen bg-gray-900 text-white">
-      {/* Sidebar */}
-      <div className="w-64 bg-gray-800 p-4 flex flex-col">
-        <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-          <FaComments /> Chat App
-        </h2>
-        {!room ? (
-          <>
-            <button
-              onClick={handleCreateRoom}
-              className="mb-4 bg-teal-600 hover:bg-teal-700 px-4 py-2 rounded-lg transition"
-            >
-              Create Room
-            </button>
-            <input
-              type="text"
-              placeholder="Enter Room ID"
-              className="mb-2 p-2 rounded-lg text-black"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleJoinRoom(e.target.value);
-              }}
-            />
-          </>
-        ) : (
-          <button
-            onClick={handleLeaveRoom}
-            className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg flex items-center gap-2 transition"
-          >
-            <FaSignOutAlt /> Leave Room
-          </button>
-        )}
-        {room && (
-          <div className="mt-6">
-            <h3 className="text-lg font-semibold">{room.roomName || "Active Room"}</h3>
-            <p className="flex items-center gap-2 mt-2">
-              <FaUsers /> {roomUsers} online
-            </p>
-          </div>
-        )}
-      </div>
+  const handleCreateRoom = (e) => {
+    e.preventDefault();
+    if (socket) {
+      socket.emit('createRoom', {
+        roomName: `${userName}'s Room`,
+        userName
+      });
+    }
+  };
 
-      {/* Chat area */}
-      <div className="flex-1 flex flex-col">
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {allMessages.map((message, index) => {
-            const isMine = socket && message.socketId === socket.id;
-            return (
-              <motion.div
-                key={message.id || index}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex ${isMine ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-xs md:max-w-md px-4 py-2 rounded-xl ${
-                    isMine
-                      ? "bg-teal-600 rounded-br-none"
-                      : "bg-slate-700 rounded-bl-none"
-                  }`}
-                >
-                  {!isMine && (
-                    <p className="text-xs font-semibold text-teal-300">
-                      {message.senderName}
-                    </p>
-                  )}
-                  <p className="text-white">{message.msg}</p>
-                  <p
-                    className={`text-xs mt-1 ${
-                      isMine ? "text-teal-200" : "text-slate-400"
-                    } text-right`}
-                  >
-                    {new Date(message.time).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </div>
-              </motion.div>
-            );
-          })}
-          <div ref={messagesEndRef} />
+  const handleJoinRoom = (e) => {
+    e.preventDefault();
+    if (!roomIdInput.trim()) {
+      setError('Please enter room ID');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+    if (socket) {
+      socket.emit('joinRoom', roomIdInput);
+    }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(currentRoom.id);
+    setError('Room ID copied to clipboard!');
+    setTimeout(() => setError(''), 2000);
+  };
+
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (!message.trim() || !currentRoom.id || !socket) return;
+
+    const newMessage = {
+      time: new Date(),
+      msg: message,
+      name: userName
+    };
+
+    socket.emit('newMessage', {
+      newMessage,
+      room: currentRoom.id
+    });
+
+    setMessage('');
+  };
+
+  const leaveRoom = () => {
+    setIsInRoom(false);
+    setCurrentRoom({ id: '', name: '' });
+    setRoomIdInput('');
+    setAllMessages([]);
+  };
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [allMessages]);
+
+  if (isInRoom) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex flex-col">
+        {/* Chat Header */}
+        <div className="p-4 bg-slate-800/80 backdrop-blur-md border-b border-slate-700/50 flex justify-between items-center">
+          <div className="flex items-center">
+            <div className="w-10 h-10 rounded-full bg-teal-500/20 flex items-center justify-center border border-teal-500/30">
+              <FiHash className="text-teal-400" size={18} />
+            </div>
+            <div className="ml-3">
+              <h2 className="font-medium text-slate-100">{currentRoom.name || 'Chat Room'}</h2>
+              <p className="text-xs text-slate-400">ID: {currentRoom.id}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={copyToClipboard}
+              className="flex items-center text-sm bg-slate-700/50 hover:bg-slate-600/50 px-3 py-1.5 rounded-lg border border-slate-700/50 text-slate-200"
+            >
+              <FiCopy className="mr-1.5" /> Copy ID
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={leaveRoom}
+              className="flex items-center text-sm bg-rose-600/90 hover:bg-rose-700 px-3 py-1.5 rounded-lg text-white"
+            >
+              Leave
+            </motion.button>
+          </div>
         </div>
 
-        {room && (
-          <div className="p-4 bg-gray-800 flex items-center gap-2">
+        {/* Messages Area */}
+        <div className="flex-1 p-4 overflow-y-auto">
+          <div className="max-w-3xl mx-auto space-y-3">
+            {allMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-slate-800/50 border border-slate-700/50 flex items-center justify-center mb-4">
+                  <FiMessageSquare className="text-slate-500" size={24} />
+                </div>
+                <h3 className="text-lg font-medium text-slate-300">No messages yet</h3>
+                <p className="text-slate-500 mt-1">Send your first message to start the conversation</p>
+              </div>
+            ) : (
+              allMessages.map((message, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`flex ${userName === message.name ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`max-w-xs md:max-w-md px-4 py-2 rounded-xl ${
+                      userName === message.name
+                        ? 'bg-teal-600 rounded-br-none'
+                        : 'bg-slate-700 rounded-bl-none'
+                    }`}
+                  >
+                    {userName !== message.name && (
+                      <p className="text-xs font-semibold text-teal-300">
+                        {message.name}
+                      </p>
+                    )}
+                    <p className="text-white">{message.msg}</p>
+                    <p
+                      className={`text-xs mt-1 ${
+                        userName === message.name ? 'text-teal-200' : 'text-slate-400'
+                      } text-right`}
+                    >
+                      {new Date(message.time).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                </motion.div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Message Input */}
+        <form onSubmit={handleSendMessage} className="p-4 bg-slate-800/80 backdrop-blur-md border-t border-slate-700/50">
+          <div className="flex items-center gap-2">
             <input
               type="text"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-              placeholder="Type your message..."
-              className="flex-1 p-2 rounded-lg text-black"
+              placeholder="Type a message..."
+              className="flex-1 py-3 px-4 bg-slate-700/50 border border-slate-700/50 rounded-full focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500/50 text-white placeholder-slate-400"
+              disabled={!currentRoom.id}
             />
-            <button
-              onClick={handleSendMessage}
-              className="bg-teal-600 hover:bg-teal-700 px-4 py-2 rounded-lg flex items-center gap-2 transition"
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              type="submit"
+              className="p-3 bg-teal-600 hover:bg-teal-700 rounded-full text-white disabled:opacity-50 disabled:bg-slate-700"
+              disabled={!currentRoom.id || !message.trim()}
             >
-              <FaPaperPlane /> Send
-            </button>
+              <FiSend size={18} />
+            </motion.button>
           </div>
-        )}
+        </form>
+
+        {/* Error Notification */}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 shadow-lg flex items-center"
+            >
+              <p className="text-sm">{error}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+    );
+  }
+
+  // Room Selection UI
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4 relative">
+      {/* Error Notification */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-rose-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center z-50"
+          >
+            <p className="text-sm">{error}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-slate-800/80 backdrop-blur-md rounded-xl shadow-xl overflow-hidden border border-slate-700/50"
+      >
+        {/* Header */}
+        <div className="p-6 bg-gradient-to-r from-slate-800/50 to-slate-900/50 text-center border-b border-slate-700/50">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
+            <FiMessageSquare className="text-teal-400" size={28} />
+          </div>
+          <h1 className="text-2xl font-bold text-white">Chat Rooms</h1>
+          <p className="text-slate-400 mt-1">
+            {activeTab === 'create' ? 'Start a new conversation' : 'Join an existing room'}
+          </p>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-slate-700/50">
+          <button
+            onClick={() => setActiveTab('join')}
+            className={`flex-1 py-3.5 font-medium text-sm transition-colors ${
+              activeTab === 'join'
+                ? 'text-teal-400 border-b-2 border-teal-400'
+                : 'text-slate-400 hover:text-slate-300'
+            }`}
+          >
+            Join Room
+          </button>
+          <button
+            onClick={() => setActiveTab('create')}
+            className={`flex-1 py-3.5 font-medium text-sm transition-colors ${
+              activeTab === 'create'
+                ? 'text-teal-400 border-b-2 border-teal-400'
+                : 'text-slate-400 hover:text-slate-300'
+            }`}
+          >
+            Create Room
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          {activeTab === 'join' ? (
+            <form onSubmit={handleJoinRoom} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Room ID
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                    <FiHash size={18} />
+                  </div>
+                  <input
+                    type="text"
+                    value={roomIdInput}
+                    onChange={(e) => setRoomIdInput(e.target.value)}
+                    placeholder="Paste room ID here"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-700/50 border border-slate-700/50 rounded-lg focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500/50 transition-all text-white placeholder-slate-400"
+                    required
+                  />
+                </div>
+              </div>
+
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                type="submit"
+                className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all"
+              >
+                Join Room
+              </motion.button>
+            </form>
+          ) : (
+            <form onSubmit={handleCreateRoom} className="space-y-6">
+              <div className="text-center">
+                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
+                  <FiPlus size={32} className="text-teal-400" />
+                </div>
+                <h3 className="text-lg font-medium text-white">Create New Room</h3>
+                <p className="text-slate-400 mt-1">
+                  Start a private conversation with friends or colleagues
+                </p>
+              </div>
+
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                type="submit"
+                className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/50 transition-all"
+              >
+                Create Room
+              </motion.button>
+            </form>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-slate-700/50 text-center">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleLogout}
+            className="text-slate-400 hover:text-white flex items-center justify-center mx-auto text-sm"
+          >
+            <FiLogOut className="mr-2" /> Sign Out
+          </motion.button>
+        </div>
+      </motion.div>
     </div>
   );
 }
