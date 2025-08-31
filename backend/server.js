@@ -1,4 +1,4 @@
-// server.js
+
 require('dotenv').config();
 
 const express = require('express');
@@ -7,32 +7,28 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid'); // npm i uuid
+const { v4: uuidv4 } = require('uuid'); 
 
-// Routes
+
 const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 const server = http.createServer(app);
 
-// ---- Config ----
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const PORT = Number(process.env.PORT) || 3000;
 
-// ---- Middleware ----
 app.use(cors({
   origin: FRONTEND_ORIGIN,
   credentials: true,
 }));
 app.use(express.json());
 
-// ---- Routes ----
 app.get('/', (_req, res) => {
   res.send('API is running');
 });
 app.use('/api/auth', authRoutes);
 
-// ---- Socket.IO ----
 const io = new Server(server, {
   cors: {
     origin: FRONTEND_ORIGIN,
@@ -41,11 +37,7 @@ const io = new Server(server, {
   },
 });
 
-/**
- * Auth for Socket.IO
- * Client must connect with: io(URL, { auth: { token: 'Bearer <jwt>' } })
- * Also supports: io(URL, { auth: { token: '<jwt>' } }) or Authorization header.
- */
+
 io.use((socket, next) => {
   try {
     let token =
@@ -53,7 +45,6 @@ io.use((socket, next) => {
       socket.handshake.headers?.authorization ||
       '';
 
-    // Accept "Bearer xxx" or raw token
     if (typeof token === 'string' && token.startsWith('Bearer ')) {
       token = token.slice(7);
     }
@@ -62,7 +53,7 @@ io.use((socket, next) => {
 
     jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
       if (err) return next(new Error('Unauthorized'));
-      socket.userId = decoded.id; // attach user id for later use
+      socket.userId = decoded.id; 
       return next();
     });
   } catch (e) {
@@ -70,10 +61,8 @@ io.use((socket, next) => {
   }
 });
 
-// ---- In-memory room registry ----
-// roomId -> { roomName, members: Set<socket.id> }
+
 const activeRooms = new Map();
-// socket.id -> Set<roomId>
 const socketRooms = new Map();
 
 function addMember(roomId, socketId) {
@@ -109,10 +98,8 @@ function emitRoomUsers(roomId) {
 }
 
 io.on('connection', (socket) => {
-  // Optional: notify client it’s connected and who it is
   socket.emit('connected', { socketId: socket.id, userId: socket.userId });
 
-  // Create Room (stable ID; NOT socket.id)
   socket.on('createRoom', (payload = {}, ack) => {
     try {
       const roomName = (payload.roomName || 'Room').toString().trim();
@@ -123,7 +110,6 @@ io.on('connection', (socket) => {
       addMember(roomId, socket.id);
 
       const result = { roomId, roomName };
-      // Backward-compatible emit + support ack callback
       socket.emit('roomCreated', result);
       if (typeof ack === 'function') ack({ ok: true, ...result });
 
@@ -134,10 +120,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Join Room (with validation)
   socket.on('joinRoom', (roomId, ack) => {
     try {
-      if (typeof roomId === 'object') roomId = roomId?.roomId; // support object payloads
+      if (typeof roomId === 'object') roomId = roomId?.roomId; 
       if (!roomId || typeof roomId !== 'string') {
         if (typeof ack === 'function') ack({ ok: false, error: 'INVALID_ROOM_ID' });
         return socket.emit('roomError', 'Invalid room id');
@@ -160,7 +145,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Optional explicit leave (nice to have; safe no-op if not used by client)
   socket.on('leaveRoom', (roomId, ack) => {
     try {
       if (!roomId || !socket.rooms.has(roomId)) {
@@ -178,7 +162,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Messaging — emits to everyone in the room (including sender) with metadata
   socket.on('newMessage', (payload = {}, ack) => {
     try {
       const roomId = payload.room || payload.roomId;
@@ -201,7 +184,7 @@ io.on('connection', (socket) => {
         id: uuidv4(),
         roomId,
         text,
-        senderId: socket.userId || null, // requires valid JWT
+        senderId: socket.userId || null, 
         socketId: socket.id,
         timestamp: Date.now(),
       };
@@ -215,7 +198,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    // Clean up all rooms the socket was part of
     const joined = socketRooms.get(socket.id);
     if (joined && joined.size) {
       for (const roomId of Array.from(joined)) {
@@ -228,7 +210,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// ---- Start server ----
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     server.listen(PORT, () => {
@@ -241,7 +222,6 @@ mongoose.connect(process.env.MONGO_URI)
     process.exit(1);
   });
 
-// Safety: crash guards (don’t swallow errors silently in prod)
 process.on('unhandledRejection', (err) => {
   console.error('UNHANDLED REJECTION:', err);
 });
